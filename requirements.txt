@@ -1,0 +1,5 @@
+av>=12.0
+pillow>=10.0
+requests>=2.31
+websocket-client>=1.6
+weatherwork-consumer-mcp>=0.3.4 ; python_version >= "3.11"   # 华风爱科天气 MCP（可选供应商）

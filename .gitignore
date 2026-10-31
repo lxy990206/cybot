@@ -1,0 +1,24 @@
+# ===== 隐私与密钥（严禁入库）=====
+# config.json 含全部 API Key
+config.json
+# 记忆库 / 人设 / 参考音频 / 克隆音频 / 固定图（用户隐私数据）
+cybot_data/
+# 旧数据目录名（兼容）
+tianyi_data/
+
+# ===== 数据库 =====
+*.db
+*.db-shm
+*.db-wal
+
+# ===== 运行产物 =====
+__pycache__/
+*.pyc
+.venv/
+*.log
+*_log.txt
+*_err.txt
+
+# ===== 系统杂项 =====
+.DS_Store
+Thumbs.db

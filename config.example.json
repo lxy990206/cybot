@@ -1,0 +1,98 @@
+{
+  "_说明": "复制本文件为 config.json 并填入你自己的 API Key；本文件不含任何密钥",
+  "device": {
+    "ip": "192.168.31.169",
+    "port": 32342,
+    "client_name": "CyBot",
+    "last_device_id": "",
+    "auto_discover": true,
+    "reconnect_interval": 15
+  },
+  "llm": {
+    "base_url": "https://api.deepseek.com/",
+    "api_key": "【你的 LLM API Key】",
+    "model": "deepseek-chat",
+    "temperature": 0.8,
+    "max_tokens": 300,
+    "thinking": "default",
+    "extra_body": ""
+  },
+  "embed": {
+    "base_url": "https://api.siliconflow.cn/v1",
+    "api_key": "【你的嵌入 API Key】",
+    "model": "BAAI/bge-m3",
+    "rerank_model": "BAAI/bge-reranker-v2-m3"
+  },
+  "asr": {
+    "provider": "siliconflow",
+    "base_url": "https://api.siliconflow.cn/v1",
+    "api_key": "【你的 ASR API Key】",
+    "model": "FunAudioLLM/SenseVoiceSmall",
+    "hotwords": ["天依", "洛天依", "小洛", "阿绫", "墨清玄", "言和", "徵羽摩柯", "中V"],
+    "corrections": {"天一": "天依", "阿玲": "阿绫"}
+  },
+  "tts": {
+    "provider": "mimo",
+    "volume": 80,
+    "reference_audio": "cybot_data/voice_ref.wav",
+    "providers": {
+      "mimo": {
+        "base_url": "https://api.xiaomimimo.com/v1",
+        "api_key": "【你的 MiMo API Key】",
+        "model": "mimo-v2.5-tts-voiceclone"
+      },
+      "bailian": {
+        "base_url": "https://dashscope.aliyuncs.com/api/v1",
+        "api_key": "【你的百炼 API Key】",
+        "model": "qwen3-tts-flash",
+        "voice": "Cherry"
+      },
+      "qwen_audio_tts": {
+        "base_url": "https://dashscope.aliyuncs.com/api/v1",
+        "api_key": "【你的百炼 API Key】",
+        "model": "qwen-audio-3.1-tts-plus",
+        "voice": "longanlingxi"
+      },
+      "cosyvoice_v35": {
+        "base_url": "https://dashscope.aliyuncs.com/api/v1",
+        "api_key": "【你的百炼 API Key】",
+        "model": "cosyvoice-v3.5-flash",
+        "voice": "longxiaochun"
+      },
+      "qwen3_realtime": {
+        "base_url": "https://dashscope.aliyuncs.com/api/v1",
+        "api_key": "【你的百炼 API Key】",
+        "model": "qwen3-tts-flash-realtime",
+        "voice": "Cherry"
+      }
+    }
+  },
+  "bot": {
+    "name": "洛天依",
+    "screen_name": "洛天依",
+    "chat_name": "天依",
+    "city": "杭州",
+    "timezone": "Asia/Shanghai",
+    "persona_file": "cybot_data/persona.md",
+    "expression_dir": "cybot_data/expressions",
+    "fixed_image": "cybot_data/fixed_image.png"
+  },
+  "weather": {
+    "provider": "hfx_mcp",
+    "api_key": "【你的天气 API Key，可选】",
+    "city": "",
+    "cache_minutes": 60,
+    "mcp_command": "weatherwork-consumer-mcp",
+    "mcp_env_key": "WEATHERCN_OPENAPI_KEY",
+    "mcp_tool": "get_current_weather",
+    "mcp_arg_city_key": "location"
+  },
+  "memory": {
+    "dir": "cybot_data/memory",
+    "core_limit": 8,
+    "inject_limit": 12
+  },
+  "server": {
+    "ui_port": 8321
+  }
+}
