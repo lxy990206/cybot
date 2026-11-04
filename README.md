@@ -1,6 +1,6 @@
 # CyBot · 次元Bot
 
-![version](https://img.shields.io/badge/version-v1.0.0-blue) ![python](https://img.shields.io/badge/python-3.11%2B-green) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
+![version](https://img.shields.io/badge/version-v1.0.2-blue) ![python](https://img.shields.io/badge/python-3.11%2B-green) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
 
 基于 **ZECTRIX Note 4 墨水屏设备** 的 AI 角色扮演智能体。设备端语音对话、墨水屏对话 UI、三层记忆系统、多供应商大模型接入、WebUI 八模块控制台，一体化开箱即用。
 
@@ -13,6 +13,7 @@
 - **墨水屏对话 UI**：400×300 gray4 渲染、表情 / 固定图片避让换行、帧去重 + 清残影防褪色、FS 抖动、顶栏电量实时显示
 - **WebUI 控制台**（局域网可访问）：概览 / 模型 / TTS / ASR / BOT / 记忆管理 / 服务端 / 终端 八模块；克隆音频文件服务 + 云端音色管理（音色绑定模型校验）
 - **交互按键**：短按上/下滚动翻页 · 长按上/下调音量 · 短按确认重听 · 长按确认说话
+- **设备端主动连接**（固件 3.7.5+）：设备端「设置 → 网络同步 → 连接管理端」可反向连到 PC（监听 UDP 32343，连接 ID 校验、去重、不抢占）
 - **一键部署**：Windows / Linux 安装与启动脚本，虚拟环境隔离
 
 ## 快速开始
@@ -32,6 +33,14 @@ Linux:    ./start_linux.sh
 
 控制台：`http://127.0.0.1:8321`（同网段设备可经 `http://<主机IP>:8321` 访问）。
 
+> 防火墙提示：如启用防火墙，请放行 **UDP 32342**（设备通信）、**UDP 32343**（设备端反向连接）、**TCP 8321**（WebUI）。
+
+## 设备与 SDK
+
+- 设备：ZECTRIX Note 4 墨水屏（400×300，zectrix-s3-epaper-4.2），推荐固件 **3.7.5+**
+- 设备协议：Zectrix LAN v1（UDP，wire_version 1），实现与官方 SDK 0.2.0 / 协议文档 1.6 逐项核对一致
+- SDK 上游仓库：**https://github.com/itopinion/zectrix-local-push-sdk**（Rust；本仓库内嵌 `zectrix-local-push-sdk/` 快照随版本同步更新，协议细节见其 `docs/`）
+
 ## 目录结构
 
 ```
@@ -48,7 +57,8 @@ cybot/
 ├── docs/                    # 云同步契约等文档
 ├── zectrix_note4_link_test.py   # 设备链路测试工具
 ├── cybot_data/              # 运行数据（不入库）：记忆库 / 人设 / 参考音频
-└── zectrix-local-push-sdk/  # 厂商本地推送 SDK（Rust）
+└── zectrix-local-push-sdk/  # 厂商本地推送 SDK（Rust，快照）
+                             # 上游：https://github.com/itopinion/zectrix-local-push-sdk
 ```
 
 ## 隐私说明
@@ -57,7 +67,8 @@ cybot/
 
 ## 版本
 
-**v1.0.0** — 首个稳定版本。
+- **v1.0.2** — 适配 SDK 0.2.0（固件 3.7.5），新增设备端主动连接（UDP 32343）；事件泵/状态轮询常驻化
+- **v1.0.0** — 首个稳定版本。
 
 ## 未来计划
 
