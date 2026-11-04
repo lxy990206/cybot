@@ -299,6 +299,7 @@ def api_overview():
         bot_info = {"connected": bool(b.alive and not b.dead), "addr": "%s:%d" % b.addr,
                     "device_id": getattr(b, "device_id", ""), "state": _BOT.state,
                     "volume": _BOT.volume,
+                    "conn_req": bool(getattr(_BOT, "conn_req_listening", False)),
                     "battery": ds.get("battery"), "charging": ds.get("charging"),
                     "rssi": ds.get("rssi")}
     stats = getattr(_BOT, "stats", {}) if _BOT else {}
@@ -445,6 +446,7 @@ pages.overview = async el => {
   <h2>概览</h2>
   <div class="grid">
     <div class="kpi"><b>${o.bot.connected?'在线':'离线'}</b><span>设备连接 ${esc(o.bot.addr)}</span></div>
+    <div class="kpi"><b>${o.bot.conn_req?'开启':'关闭'}</b><span>反向连接监听（UDP 32343）</span></div>
     <div class="kpi"><b>${esc(o.bot.device_id||'-')}</b><span>设备 ID</span></div>
     <div class="kpi"><b>${esc(o.routine)}</b><span>当前作息</span></div>
     <div class="kpi"><b>${o.turns}</b><span>累计对话轮次</span></div>
@@ -464,7 +466,7 @@ pages.overview = async el => {
       <button class="btn" onclick="api('/api/action/query_status').then(()=>{load()})">立即查询电量</button>
       <button class="btn" onclick="confirm('确认断开与设备的连接？断开后可随时重新连接。')&&api('/api/action/disconnect').then(()=>setTimeout(load,800))">断开连接</button>
       <button class="btn" onclick="api('/api/action/reconnect').then(()=>alert('重连已发起'))">重新连接设备</button>
-      <span class="hint">按键：短按上/下=滚动翻页 · 长按上/下=音量± · 短按确认=重听 · 电量每 60 秒自动刷新并显示在设备屏顶栏</span>
+      <span class="hint">按键：短按上/下=滚动翻页 · 长按上/下=音量± · 短按确认=重听 · 设备端「设置→网络同步→连接管理端」可反向连到本机（需放行 UDP 32343）</span>
     </div>
   </div>`;
 };
@@ -544,7 +546,7 @@ pages.tts = async el => {
       <select id="vfsel">${vfiles.files.map(f=>`<option>${esc(f)}</option>`).join('')}</select></div>
       <button class="btn warn" onclick="delVFile()">删除所选</button></div>
     <div class="row"><div class="field"><label>上传克隆音频</label>
-      <input type="text" id="vfname" placeholder="文件名，如 tianyi_ref.wav">
+      <input type="text" id="vfname" placeholder="文件名，如 cybot_ref.wav">
       <input type="text" id="vfb64" placeholder="base64 内容（或用下方选择本地文件）">
       <input type="file" id="vffile" accept=".wav,.mp3,.flac,.ogg,.m4a">
       <button class="btn" onclick="uploadVFile()">上传</button></div></div>
@@ -568,7 +570,7 @@ pages.tts = async el => {
     <button class="btn warn" onclick="delRef()">删除所选</button>
     <p class="hint">MiMo 克隆使用「当前选择」的音频（tts.reference_audio）。上传：选择本地文件或填 base64。</p>
     <div class="row"><div class="field"><label>上传新参考音频</label>
-      <input type="text" id="refname" placeholder="文件名，如 tianyi_ref.wav">
+      <input type="text" id="refname" placeholder="文件名，如 cybot_ref.wav">
       <input type="text" id="refb64" placeholder="base64 内容（或用下方选择本地文件）">
       <input type="file" id="reffile" accept=".wav,.mp3,.flac,.ogg">
       <button class="btn" onclick="uploadRef()">上传</button></div></div>

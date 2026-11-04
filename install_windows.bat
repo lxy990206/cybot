@@ -60,6 +60,11 @@ echo     - asr.api_key      语音识别 API Key
 echo     - tts.api_key      语音合成 API Key（含克隆音色）
 echo     - weather.api_key  天气 API Key（可选）
 echo.
+echo   防火墙提示（首次运行放行后功能更完整）：
+echo     - UDP 32342  设备通信（推图/音频/按键）
+echo     - UDP 32343  设备端「连接管理端」反向连接（固件 3.7.5+）
+echo     - TCP 8321   WebUI 局域网访问
+echo.
 echo   之后运行 start_windows.bat 启动即可
 echo ================================================
 pause

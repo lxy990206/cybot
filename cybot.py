@@ -81,6 +81,8 @@ INFO, CONNECT, PING, CLOSE = 1, 2, 3, 4
 IMAGE_BEGIN, IMAGE_DATA, IMAGE_STATUS = 5, 6, 7
 AUDIO_BEGIN, AUDIO_DATA, AUDIO_END, AUDIO_STOP = 8, 9, 10, 11
 STATE, RESULT, KEY, STATUS, PALETTE = 12, 13, 14, 15, 16
+CONNECT_REQUEST = 17            # 设备端发起的连接请求（新版 SDK 0.2.0 / 固件 3.7.5+）
+CONNECTION_REQUEST_PORT = 32343  # 设备「设置→网络同步→连接管理端」固定请求端口
 
 RESULT_NAMES = {0: "OK", 1: "BUSY", 2: "INVALID", 3: "STALE",
                 4: "FAILED", 5: "OLD_REQUEST"}
@@ -274,7 +276,8 @@ class Note4Bot:
 
     # ---------- 连接 ----------
 
-    def connect(self):
+    def connect(self, expected_conn_id=None):
+        """连接设备。expected_conn_id：设备端主动连接请求携带的连接 ID（校验一致性）。"""
         ip, port = self.addr
         log("正在连接设备 %s:%d ..." % (ip, port))
         resp = self._exchange(INFO, 0, 1, b"", total_wait=12.0, first_wait=1.0)
@@ -326,6 +329,10 @@ class Note4Bot:
         log("发现设备：ID=%s 型号=%s" % (dev_id, model))
         self.device_id = dev_id
         self._fire(self.on_connected, (self.addr[0], dev_id, model))
+        if expected_conn_id is not None and resp[1] != expected_conn_id:
+            log("[错误] 设备返回的连接 ID 与请求不符（%d != %d），放弃回连" %
+                (resp[1], expected_conn_id))
+            return False
         if busy:
             log("[错误] 设备正被其他 PC 管理，不抢占")
             return False
@@ -1203,19 +1210,21 @@ class TianyiBot:
         self.bot = self._make_bot()
         self.renderer = ScreenRenderer(self.bot.palette_gray4, self.cfg)
         self._render_lock = threading.Lock()
+        self._conn_req_lock = threading.Lock()   # 设备端回连并发防护
+        self.conn_req_listening = False          # UDP 32343 反向连接监听是否就绪（WebUI 展示）
         self.exit_flag = False        # WebUI/主循环的彻底退出标志（断开连接不影响运行）
 
-    def _make_bot(self):
+    def _make_bot(self, ip=None):
         device = self.cfg["device"]
 
-        def _on_connected(ip, dev_id, model):
+        def _on_connected(nip, dev_id, model):
             # 记住设备 ID 与最新 IP：DHCP 换 IP 后按 ID 自动发现
-            self.cfg["device"]["ip"] = ip
+            self.cfg["device"]["ip"] = nip
             self.cfg["device"]["last_device_id"] = dev_id
             save_config(self.cfg)
 
         return Note4Bot(
-            device["ip"], int(device.get("port", 32342)),
+            ip or device["ip"], int(device.get("port", 32342)),
             device.get("client_name", "CyBot"),
             on_key=self._on_key, on_recording=self._on_recording,
             on_state=self._on_state,
@@ -1237,7 +1246,6 @@ class TianyiBot:
             if self.bot.connect():
                 self.state = "待命"
                 self.refresh_screen()
-                threading.Thread(target=self._status_loop, daemon=True).start()
             else:
                 log("[重连] 失败，可稍后再次发起")
             del old
@@ -1253,6 +1261,77 @@ class TianyiBot:
             except Exception:
                 pass
             self.state = "已断开"
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ---------- 设备端主动连接（新版 SDK 0.2.0 / 固件 3.7.5+） ----------
+
+    def start_connection_request_listener(self):
+        """监听 UDP 32343：设备端「设置 → 网络同步 → 连接管理端」会向最近一次
+        成功接管它的管理端 IP 发起反向连接请求（type=17, conn≠0, seq=1, 空 body，
+        10 秒内有效）。线程随进程存活，断开连接后仍可接收设备回连请求。"""
+        threading.Thread(target=self._connection_request_listener, daemon=True).start()
+
+    def _connection_request_listener(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("0.0.0.0", CONNECTION_REQUEST_PORT))
+        except OSError as e:
+            log("[连接请求监听] UDP %d 绑定失败：%r（设备端主动连接不可用，"
+                "不影响 PC 主动连接）" % (CONNECTION_REQUEST_PORT, e))
+            return
+        sock.settimeout(1.0)
+        self.conn_req_listening = True
+        log("[连接请求监听] 已监听 UDP %d（设备端可发起反向连接）" %
+            CONNECTION_REQUEST_PORT)
+        seen = deque(maxlen=256)          # (addr, conn_id) 60 秒去重
+        while not self.exit_flag:
+            try:
+                data, addr = sock.recvfrom(1201)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            pkt = decode_packet(data)
+            # 校验：type=17、connection≠0、sequence=1、body 为空（与 SDK 一致）
+            if not pkt or pkt[0] != CONNECT_REQUEST or pkt[1] == 0 or \
+                    pkt[2] != 1 or pkt[3]:
+                continue
+            now = time.monotonic()
+            seen = deque((a, c, t) for (a, c, t) in seen if now - t < 60)
+            if any(a == addr and c == pkt[1] for (a, c, t) in seen):
+                continue
+            seen.append((addr, pkt[1], now))
+            log("[连接请求] 设备 %s 发起反向连接（conn=%d）" % (addr[0], pkt[1]))
+            self._accept_connection_request(addr[0], pkt[1])
+
+    def _accept_connection_request(self, ip, conn_id):
+        """响应设备端连接请求：当前已有设备连接则忽略（不抢占），否则立即回连。"""
+        if self.bot.alive and not self.bot.dead:
+            log("[连接请求] 当前已有设备连接，忽略该请求（不抢占）")
+            return
+        if not self._conn_req_lock.acquire(blocking=False):
+            log("[连接请求] 已有回连进行中，忽略该请求")
+            return
+
+        def worker():
+            try:
+                log("[回连] 响应设备端请求，连接 %s ..." % ip)
+                try:
+                    self.bot.close()
+                except Exception:
+                    pass
+                time.sleep(0.5)
+                old = self.bot
+                self.bot = self._make_bot(ip=ip)
+                if self.bot.connect(expected_conn_id=conn_id):
+                    self.state = "待命"
+                    self.refresh_screen()
+                else:
+                    log("[回连] 设备端请求回连失败（请求已过期可重试）")
+                del old
+            finally:
+                self._conn_req_lock.release()
         threading.Thread(target=worker, daemon=True).start()
 
     # ---------- 设备回调 → 队列 ----------
@@ -1287,10 +1366,13 @@ class TianyiBot:
     # ---------- 事件处理 ----------
 
     def worker(self):
-        while not self.bot.dead:
+        # 常驻事件泵：会话终止（dead）时丢弃积压事件并等待重连，不退出线程
+        while not self.exit_flag:
             try:
                 ev = self.events.get(timeout=1.0)
             except queue.Empty:
+                continue
+            if self.bot.dead or not self.bot.alive:
                 continue
             try:
                 if ev[0] == "state":
@@ -1488,14 +1570,16 @@ class TianyiBot:
                     on_config_changed=self._on_config_changed)
         self.state = "待命"
         self.refresh_screen()
+        self.start_connection_request_listener()   # 设备端「连接管理端」反向连接监听
         threading.Thread(target=self.worker, daemon=True).start()
         threading.Thread(target=self._status_loop, daemon=True).start()
         return True
 
     def _status_loop(self):
-        """每 60 秒查询一次设备电量/充电/RSSI；电量变化时刷新屏幕顶栏。"""
+        """每 60 秒查询一次设备电量/充电/RSSI；电量变化时刷新屏幕顶栏。
+        常驻线程：会话终止时跳过查询，重连后自动恢复。"""
         last_battery = None
-        while not self.bot.dead:
+        while not self.exit_flag:
             try:
                 time.sleep(60)
                 if self.bot.dead or not self.bot.alive:
