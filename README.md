@@ -1,19 +1,20 @@
 # CyBot · 次元Bot
 
-![version](https://img.shields.io/badge/version-v1.0.2-blue) ![python](https://img.shields.io/badge/python-3.11%2B-green) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
+![version](https://img.shields.io/badge/version-v1.0.3-blue) ![python](https://img.shields.io/badge/python-3.11%2B-green) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
 
 基于 **ZECTRIX Note 4 墨水屏设备** 的 AI 角色扮演智能体。设备端语音对话、墨水屏对话 UI、三层记忆系统、多供应商大模型接入、WebUI 八模块控制台，一体化开箱即用。
 
 ## 功能特性
 
-- **语音对话闭环**：设备录音（Opus 16kHz）→ ASR 音近纠错 → LLM（人设注入）→ TTS 音色克隆 → 推流播放，文字与语音同步上屏
+- **语音对话闭环**：设备录音（Opus 16kHz）→ ASR 音近纠错 → LLM（人设注入）→ TTS 音色克隆 → 流式推放（WS 边合成边推流，降低首响延迟），文字与语音同步上屏
 - **三层记忆系统**：短期（24h 完整上下文）/ 中期（每日 AI 总结）/ 长期（30 天整合 + 60 天衰减），核心记忆常驻防失忆；SQLite 嵌入式向量库（bge-m3 + bge-reranker 重排）
 - **多供应商适配**：LLM / ASR / TTS 统一适配层，开箱支持小米 MiMo（音色克隆）、阿里云百炼（Qwen3-TTS / Qwen-Audio-TTS / CosyVoice v3.5 duplex WebSocket / Realtime WebSocket / 声音复刻）、DeepSeek、硅基流动、豆包、GPT-SoVITS、FunASR 等本地服务
-- **天气按需调度**：华风爱科天气 MCP / 和风 / 高德 / 彩云 / OpenWeather；提及天气才查询，1 小时缓存，多城市独立缓存，节省 API 额度
+- **天气按需调度**：华风爱科天气 MCP / 和风 / 高德 / 彩云 / OpenWeather；提及天气才查询，未指定城市时默认使用播报城市，1 小时缓存，多城市独立缓存，节省 API 额度
 - **墨水屏对话 UI**：400×300 gray4 渲染、表情 / 固定图片避让换行、帧去重 + 清残影防褪色、FS 抖动、顶栏电量实时显示
 - **WebUI 控制台**（局域网可访问）：概览 / 模型 / TTS / ASR / BOT / 记忆管理 / 服务端 / 终端 八模块；克隆音频文件服务 + 云端音色管理（音色绑定模型校验）
 - **交互按键**：短按上/下滚动翻页 · 长按上/下调音量 · 短按确认重听 · 长按确认说话
 - **设备端主动连接**（固件 3.7.5+）：设备端「设置 → 网络同步 → 连接管理端」可反向连到 PC（监听 UDP 32343，连接 ID 校验、去重、不抢占）
+- **设备 IP 热管理**：WebUI 保存 IP/端口即时生效自动重连；按设备 ID（MAC）记忆设备，IP 变化自动找回并回写；WebUI 优先启动，设备未连接也可配置
 - **一键部署**：Windows / Linux 安装与启动脚本，虚拟环境隔离
 
 ## 快速开始
@@ -67,6 +68,7 @@ cybot/
 
 ## 版本
 
+- **v1.0.3** — WS 流式 TTS（百炼 duplex/realtime 边合成边推流，降低首响延迟）；天气未指定城市时默认使用播报城市；设备 IP 热设置 + 按设备 ID（MAC）自动重连找回；WebUI 优先启动（设备未连接也可配置）
 - **v1.0.2** — 适配 SDK 0.2.0（固件 3.7.5），新增设备端主动连接（UDP 32343）；事件泵/状态轮询常驻化
 - **v1.0.0** — 首个稳定版本。
 

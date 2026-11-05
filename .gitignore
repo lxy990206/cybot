@@ -19,6 +19,10 @@ __pycache__/
 *_log.txt
 *_err.txt
 
+# ===== 编辑器/本地工具配置 =====
+.vscode/
+.idea/
+
 # ===== 系统杂项 =====
 .DS_Store
 Thumbs.db

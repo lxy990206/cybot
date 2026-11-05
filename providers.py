@@ -427,6 +427,15 @@ class BailianDuplexTTS:
         self.timeout = timeout
 
     def tts(self, text):
+        pcm = bytearray()
+        self.tts_stream(text, pcm.extend)
+        return _pcm_to_wav(pcm, self.sample_rate)
+
+    def tts_stream(self, text, on_pcm):
+        """流式合成：每收到一段 PCM（16k s16 mono）即回调 on_pcm(bytes)。
+
+        run-task → task-started → continue-task(text) → finish-task
+        → binary 音频帧（逐帧回调）→ task-finished。"""
         import websocket  # websocket-client
         task_id = str(uuid.uuid4())
         ws = websocket.create_connection(
@@ -467,11 +476,13 @@ class BailianDuplexTTS:
                 "header": {"action": "finish-task", "task_id": task_id,
                            "streaming": "duplex"},
                 "payload": {"input": {}}}))
-            pcm = bytearray()
-            while True:                                   # 收 binary 音频帧
+            got = False
+            while True:                                   # 收 binary 音频帧（逐帧回调）
                 msg = ws.recv()
                 if isinstance(msg, bytes):
-                    pcm.extend(msg)
+                    if msg:
+                        got = True
+                        on_pcm(msg)
                     continue
                 h = (json.loads(msg).get("header") or {})
                 if h.get("event") == "task-finished":
@@ -479,9 +490,8 @@ class BailianDuplexTTS:
                 if h.get("event") == "task-failed":
                     raise ValueError("DuplexTTS task-failed：%s %s" %
                                      (h.get("error_code"), h.get("error_message")))
-            if not pcm:
+            if not got:
                 raise ValueError("DuplexTTS 未收到音频数据")
-            return _pcm_to_wav(pcm, self.sample_rate)
         finally:
             try:
                 ws.close()
@@ -512,6 +522,12 @@ class BailianRealtimeTTS:
         self.timeout = timeout
 
     def tts(self, text):
+        pcm = bytearray()
+        self.tts_stream(text, pcm.extend)
+        return _pcm_to_wav(pcm, self.sample_rate)
+
+    def tts_stream(self, text, on_pcm):
+        """流式合成：每个 response.audio.delta 解码后立即回调 on_pcm(bytes)。"""
         import websocket  # websocket-client
         url = "%s?model=%s" % (DASHSCOPE_RT, self.model)
         ws = websocket.create_connection(
@@ -561,13 +577,16 @@ class BailianRealtimeTTS:
                     raise ValueError("RealtimeTTS 等待 session.updated 超时")
             send({"event_id": next_id(), "type": "input_text_buffer.append",
                   "text": str(text)})
-            pcm = bytearray()
+            got = False
             finished = False
-            while not finished:                           # response.audio.delta
+            while not finished:                           # response.audio.delta（逐块回调）
                 ev = recv_event()
                 et = ev.get("type")
                 if et == "response.audio.delta":
-                    pcm.extend(base64.b64decode(ev.get("delta") or ""))
+                    data = base64.b64decode(ev.get("delta") or "")
+                    if data:
+                        got = True
+                        on_pcm(data)
                 elif et == "response.done":
                     resp = ev.get("response") or {}
                     if resp.get("status") not in ("completed", "in_progress"):
@@ -581,9 +600,8 @@ class BailianRealtimeTTS:
                 if time.monotonic() > deadline:
                     raise ValueError("RealtimeTTS 等待音频超时")
             send({"event_id": next_id(), "type": "session.finish"})
-            if not pcm:
+            if not got:
                 raise ValueError("RealtimeTTS 未收到音频数据")
-            return _pcm_to_wav(pcm, self.sample_rate)
         finally:
             try:
                 ws.close()
@@ -813,6 +831,8 @@ def build_tts(cfg, voice_ref_b64=None):
     else:
         obj = OpenAICompatTTS(p["base_url"], p.get("api_key", ""), p.get("model", "default"),
                               p.get("voice", "default"), p.get("format", "wav"))
+    if hasattr(obj, "tts_stream"):
+        _wrap_call("TTS", obj, "tts_stream", _tts_req, lambda r: "流式合成完成")
     return _wrap_call("TTS", obj, "tts", _tts_req,
                       lambda r: "音频 %d 字节" % len(r))
 

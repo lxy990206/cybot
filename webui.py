@@ -885,8 +885,9 @@ pages.server = async el => {
     <button class="btn primary" onclick="saveSecDyn('server')">保存</button>
   </div>
   <div class="card"><h3>设备连接</h3>
-    ${fields([{k:'ip',label:'设备 IP（留空或失联时自动发现）'},{k:'port',label:'端口'},{k:'client_name',label:'PC 显示名称'},{k:'last_device_id',label:'设备 ID（自动记录）'},{k:'auto_discover',label:'自动发现',type:'select',opts:['true','false']},{k:'reconnect_interval',label:'重连间隔（秒）'}], d)}
+    ${fields([{k:'ip',label:'设备 IP（留空或失联时自动发现）'},{k:'port',label:'端口'},{k:'client_name',label:'PC 显示名称'},{k:'last_device_id',label:'设备 ID（即 MAC，自动记录）'},{k:'auto_discover',label:'自动发现',type:'select',opts:['true','false']},{k:'reconnect_interval',label:'重连间隔（秒）'}], d)}
     <button class="btn primary" onclick="saveSecDyn('device')">保存</button>
+    <span class="hint">保存后若 IP/端口变化或设备未连接将自动重连；设备换 IP 时按设备 ID 自动找回并回写新 IP；设备端「网络同步 → 连接管理端」也可反向连到本机</span>
     <span class="hint">设备 ID 不随 DHCP 换 IP 变化，自动发现按 ID 锁定设备</span>
   </div>`;
 };

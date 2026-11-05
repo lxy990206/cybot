@@ -585,6 +585,75 @@ class Note4Bot:
             log("[警告] %s播放结束状态未知" % label)
             return -1
 
+    def play_opus_stream(self, q, volume, label="语音"):
+        """流式播放：q 逐个产出 Opus 帧（bytes），以 ("end", tail) 收尾、None 表示失败。
+
+        WS 流式 TTS 边合成边推流：帧到达即按 60ms 节奏发送（TTS 慢于实时时
+        立即发送，不视为调度停顿）。返回 (结束原因码, 已发送帧列表, tail)。"""
+        if self.dead:
+            return -1, [], 0
+        with self._play_lock:
+            stream_id = self._next_control()
+            resp, code = self.request(AUDIO_BEGIN, bytes([volume & 0xFF]), stream_id)
+            if resp is None:
+                log("[错误] %s流式播放发起超时" % label)
+                return -1, [], 0
+            if code != 0:
+                log("[提示] %s流式播放被拒（%s）" % (label, result_name_s(code)))
+                return code, [], 0
+            log("%s流式播放开始：流 ID=%d" % (label, stream_id))
+            frames, tail = [], OPUS_FRAME_SAMPLES
+            start = None
+            idle_since = time.monotonic()
+            result = None
+            while True:
+                got = self._results.get((2, stream_id))
+                if got is not None:
+                    result = got
+                    break
+                try:
+                    item = q.get(timeout=0.2)
+                except queue.Empty:
+                    if time.monotonic() - idle_since > 10.0:
+                        log("[错误] %s流式音频中断（10 秒无新帧），中止播放" % label)
+                        self.request(AUDIO_STOP, struct.pack(">I", stream_id),
+                                     self._next_control())
+                        return -1, frames, tail
+                    continue
+                if item is None:                       # 生产端失败
+                    result = -1
+                    break
+                if isinstance(item, tuple):            # ("end", tail) 流收尾
+                    tail = int(item[1])
+                    break
+                idle_since = time.monotonic()
+                if start is None:
+                    start = time.monotonic()
+                target = start + len(frames) * 0.06
+                delay = target - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
+                if self.dead:
+                    return -1, frames, tail
+                self._send(encode_packet(AUDIO_DATA, self.conn_id, len(frames),
+                                         struct.pack(">I", stream_id) + item))
+                frames.append(item)
+            if result == -1:
+                return -1, frames, tail
+            end_body = struct.pack(">IIHB", stream_id, len(frames), tail & 0xFFFF, 0)
+            self.request(AUDIO_END, end_body, self._next_control())
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline:
+                got = self._results.get((2, stream_id))
+                if got is not None:
+                    log("%s流式播放结束（%s）" % (label, END_REASONS.get(got, got)))
+                    return got, frames, tail
+                if self.dead:
+                    return -1, frames, tail
+                time.sleep(0.2)
+            log("[警告] %s流式播放结束状态未知" % label)
+            return -1, frames, tail
+
     def close(self):
         if self._closed:
             return
@@ -765,6 +834,69 @@ def audio_bytes_to_opus_frames(data):
     return frames, tail
 
 
+class OpusStreamEncoder:
+    """流式 Opus 编码：逐步喂 16k s16 mono PCM，按 960 采样（60ms）块输出 Opus 帧。
+
+    与整段 audio_bytes_to_opus_frames 等价，但允许「边合成边编码」：
+    feed() 返回本次凑满的完整帧；finish() 把不足一帧的尾样本补零编码为末帧，
+    返回 (末帧|None, tail 有效采样数)。逐块做峰值上限保护（只压不放大）。"""
+
+    def __init__(self):
+        self._buf = b""
+        self._emitted = 0
+        self._codec = av.CodecContext.create("libopus", "w")
+        self._codec.sample_rate = 16000
+        self._codec.layout = "mono"
+        self._codec.format = "s16"
+        self._codec.bit_rate = OPUS_BITRATE
+        self._codec.options = {"frame_duration": "60"}
+        self._codec.open()
+
+    @staticmethod
+    def _cap(pcm):
+        """块级峰值保护：超过 PEAK_TARGET 等比压回（只压不放大，避免流式截幅）。"""
+        if len(pcm) < 2:
+            return pcm
+        samples = array.array("h")
+        samples.frombytes(pcm)
+        peak = max(-min(samples), max(samples))
+        if peak > PEAK_TARGET:
+            scale = PEAK_TARGET / peak
+            return array.array("h", (int(s * scale) for s in samples)).tobytes()
+        return pcm
+
+    def _encode_block(self, chunk):
+        fr = av.AudioFrame(format="s16", layout="mono", samples=OPUS_FRAME_SAMPLES)
+        fr.sample_rate = 16000
+        fr.planes[0].update(bytes(chunk))
+        out = []
+        for pkt in self._codec.encode(fr):
+            out.append(bytes(pkt))
+        self._emitted += 1
+        return out
+
+    def feed(self, pcm):
+        frames = []
+        self._buf += self._cap(bytes(pcm))
+        block = OPUS_FRAME_SAMPLES * 2
+        while len(self._buf) >= block:
+            chunk, self._buf = self._buf[:block], self._buf[block:]
+            frames.extend(self._encode_block(chunk))
+        return frames
+
+    def finish(self):
+        block = OPUS_FRAME_SAMPLES * 2
+        valid = len(self._buf) // 2
+        if self._emitted == 0 and valid == 0:
+            raise ValueError("流式音频为空")
+        if valid > 0:
+            chunk = self._buf + b"\x00" * (block - len(self._buf))
+            frames = self._encode_block(chunk)
+            self._buf = b""
+            return (frames[0] if frames else None), max(1, valid)
+        return None, OPUS_FRAME_SAMPLES
+
+
 def pcm16k_to_wav(pcm):
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
@@ -828,10 +960,13 @@ class CloudApis:
 
     # ---- TTS：多供应商（MiMo / 豆包 / 百炼 / CosyVoice / Qwen / 本地 / GPT-SoVITS） ----
 
-    def tts_clone(self, text):
-        # 参考音频仅 MiMo 克隆链路使用；其他供应商不读（避免误导日志）
+    def tts_provider(self):
+        """构建当前 TTS 适配器（MiMo 参考音频按需注入）；含 tts_stream 则支持流式。"""
         ref = self._ref_b64() if self.cfg.get("tts", {}).get("provider") == "mimo" else None
-        return providers.build_tts(self.cfg, ref).tts(text)
+        return providers.build_tts(self.cfg, ref)
+
+    def tts_clone(self, text):
+        return self.tts_provider().tts(text)
 
 # ============================ 三层记忆库（memory_vault.py） ============================
 # 上下文注入 = 短期 10 条滚动窗口 + 短期检索匹配 + 中长期向量检索重排 + 核心记忆常驻，
@@ -1211,6 +1346,7 @@ class TianyiBot:
         self.renderer = ScreenRenderer(self.bot.palette_gray4, self.cfg)
         self._render_lock = threading.Lock()
         self._conn_req_lock = threading.Lock()   # 设备端回连并发防护
+        self._reconnect_wakeup = threading.Event()  # 唤醒后台连接循环立即重试
         self.conn_req_listening = False          # UDP 32343 反向连接监听是否就绪（WebUI 展示）
         self.exit_flag = False        # WebUI/主循环的彻底退出标志（断开连接不影响运行）
 
@@ -1233,22 +1369,20 @@ class TianyiBot:
             on_connected=_on_connected)
 
     def reconnect_async(self):
-        """WebUI 触发的异步重连：关闭旧会话 → 新建连接 → 重启工作线程。"""
+        """WebUI/配置变更触发的异步重连：关闭旧会话 → 新建连接实例 →
+        唤醒后台连接循环立即执行（连接统一由 _connect_loop 执行，避免并发冲突）。"""
         def worker():
             log("[重连] 手动重连发起 ...")
             try:
                 self.bot.close()
             except Exception:
                 pass
-            time.sleep(1.5)
+            time.sleep(1.0)
             old = self.bot
             self.bot = self._make_bot()
-            if self.bot.connect():
-                self.state = "待命"
-                self.refresh_screen()
-            else:
-                log("[重连] 失败，可稍后再次发起")
             del old
+            self.state = "连接中"
+            self._reconnect_wakeup.set()
         threading.Thread(target=worker, daemon=True).start()
 
     def disconnect_async(self):
@@ -1333,6 +1467,37 @@ class TianyiBot:
             finally:
                 self._conn_req_lock.release()
         threading.Thread(target=worker, daemon=True).start()
+
+    def _connect_loop(self):
+        """后台连接循环（唯一执行连接的地方）：未连接即尝试，失败按
+        device.reconnect_interval 重试。设备 IP 变化时由 auto_discover 按
+        设备 ID（MAC）全网段找回并回写新 IP；reconnect_async 唤醒立即重试。"""
+        inited = False
+        attempt = 0
+        while not self.exit_flag:
+            b = self.bot
+            if b.alive and not b.dead:
+                if not inited:
+                    self.vault.maintenance()
+                    st = self.vault.get_stats()
+                    log("记忆库载入：短期 %d / 中期 %d / 长期 %d（核心 %d）" %
+                        (st["short"], st["mid"], st["long"], st["key"]))
+                    inited = True
+                self._reconnect_wakeup.wait(2.0)
+                self._reconnect_wakeup.clear()
+                continue
+            attempt += 1
+            if b.connect():
+                if b is self.bot:
+                    self.state = "待命"
+                    self.refresh_screen()
+                attempt = 0
+            else:
+                interval = max(5, int(self.cfg.get("device", {}).get("reconnect_interval", 15)))
+                log("[重连] 第 %d 次失败，%d 秒后重试（设备 Wi-Fi 待机时重试即可唤醒）" %
+                    (attempt, interval))
+                self._reconnect_wakeup.wait(interval)
+                self._reconnect_wakeup.clear()
 
     # ---------- 设备回调 → 队列 ----------
 
@@ -1486,26 +1651,73 @@ class TianyiBot:
         self.renderer.scroll_reset()          # 新对话从最新内容显示
         log("洛天依（%s）：%s" % (self.emo, self.reply_text))
 
-        # TTS 先合成（协议允许播放期间接收图片）：合成完成后先推文字、紧接播放，
-        # 实现「文字上屏与语音响起同步」
-        audio_ready = None
-        try:
-            tts_wav = self.cloud.tts_clone(self.reply_text)
-            frames, tail = audio_bytes_to_opus_frames(tts_wav)
-            log("TTS 完成：%d 字节音频 → %d 个 Opus 帧" % (len(tts_wav), len(frames)))
-            audio_ready = (frames, tail)
-            self.last_audio = audio_ready
-        except Exception as e:
-            log("[错误] TTS 合成失败（仅文字上屏）：%r" % e)
-
-        # 文字+表情上屏（此时音频已就绪，随后立即播放 → 声画同步）
+        # 文字+表情先上屏，语音播报：WS 流式 TTS 边合成边推流（首声更快），
+        # 其他供应商整段合成后播放
         self.state = "说话中"
         self.refresh_screen()
-
-        if audio_ready:
-            self.bot.play_opus(audio_ready[0], audio_ready[1], self.volume, label="天依-")
+        self._speak(self.reply_text)
         self.state = "待命"
         self.refresh_screen()
+
+    def _speak(self, text, label="天依-"):
+        """语音播报：WS 流式 TTS（百炼 duplex/realtime）边合成边推流，无需等
+        整段合成完成；其他供应商整段合成后播放。完整播放成功才更新重听缓存。"""
+        try:
+            provider = self.cloud.tts_provider()
+        except Exception as e:
+            log("[错误] TTS 适配器构建失败（仅文字上屏）：%r" % e)
+            return
+        if hasattr(provider, "tts_stream"):
+            q = queue.Queue()
+            th = threading.Thread(target=self._tts_stream_producer,
+                                  args=(provider, text, q), daemon=True)
+            th.start()
+            code, frames, tail = self.bot.play_opus_stream(q, self.volume, label=label)
+            if code == 0 and frames:
+                self.last_audio = (frames, tail)
+            if code == -1 and not frames:
+                log("[提示] 流式播报未产出音频（仅文字上屏）")
+            if th.is_alive():                      # 播放被打断/失败 → 排空队列让 WS 自然收尾
+                threading.Thread(target=self._drain_queue, args=(q,), daemon=True).start()
+        else:
+            try:
+                tts_wav = provider.tts(text)
+                frames, tail = audio_bytes_to_opus_frames(tts_wav)
+                log("TTS 完成：%d 字节音频 → %d 个 Opus 帧" % (len(tts_wav), len(frames)))
+                self.last_audio = (frames, tail)
+                self.bot.play_opus(frames, tail, self.volume, label=label)
+            except Exception as e:
+                log("[错误] TTS 合成失败（仅文字上屏）：%r" % e)
+
+    @staticmethod
+    def _tts_stream_producer(provider, text, q):
+        """流式 TTS 生产者线程：PCM 块 → Opus 帧 → 队列；结束放 ("end", tail)。"""
+        try:
+            enc = OpusStreamEncoder()
+
+            def on_pcm(pcm):
+                for fr in enc.feed(pcm):
+                    q.put(fr)
+
+            provider.tts_stream(text, on_pcm)
+            last, tail = enc.finish()
+            if last:
+                q.put(last)
+            q.put(("end", tail))
+        except Exception as e:
+            log("[错误] 流式 TTS 失败：%r" % e)
+            q.put(None)
+
+    @staticmethod
+    def _drain_queue(q):
+        """播放中断后排空流式音频队列，让生产者线程自然结束（释放 WS 连接）。"""
+        try:
+            while True:
+                item = q.get(timeout=60)
+                if item is None or (isinstance(item, tuple) and item[0] == "end"):
+                    return
+        except queue.Empty:
+            pass
 
     def _say(self, reply_raw, user):
         """本地兜底话术：直接上屏+播报（不走 LLM）。"""
@@ -1516,13 +1728,7 @@ class TianyiBot:
         self.reply_text = reply_raw[m.end():].strip() if m else reply_raw
         self.state = "说话中"
         self.refresh_screen()
-        try:
-            tts_wav = self.cloud.tts_clone(self.reply_text)
-            frames, tail = audio_bytes_to_opus_frames(tts_wav)
-            self.last_audio = (frames, tail)
-            self.bot.play_opus(frames, tail, self.volume, label="天依-")
-        except Exception as e:
-            log("[错误] 兜底播报失败：%r" % e)
+        self._speak(self.reply_text)
         self.state = "待命"
         self.refresh_screen()
 
@@ -1551,28 +1757,27 @@ class TianyiBot:
         elif section == "bot":
             # bot 名称/显示开关等变更立即刷新设备屏（renderer 每次从 cfg 现读）
             self.refresh_screen()
+        elif section == "device":
+            # 设备 IP/端口热设置：地址变化或当前未连接 → 自动重连（新地址立即生效）
+            d = self.cfg.get("device", {})
+            try:
+                new_addr = (str(d.get("ip") or ""), int(d.get("port", 32342)))
+            except (TypeError, ValueError):
+                new_addr = None
+            addr_changed = (new_addr is None or
+                            (new_addr[0] and new_addr != tuple(self.bot.addr)))
+            if addr_changed or self.bot.dead or not self.bot.alive:
+                log("[设备] 连接配置已保存，自动重连以生效 ...")
+                self.reconnect_async()
 
     def run(self):
-        # 连接重试循环：直连 → 自动发现 → 15 秒后再试（适配设备 Wi-Fi 待机/换 IP）
-        attempt = 0
-        while not self.bot.connect():
-            attempt += 1
-            log("[重连] 第 %d 次失败，15 秒后重试（Ctrl+C 退出）..." % attempt)
-            try:
-                time.sleep(15)
-            except KeyboardInterrupt:
-                return False
-        self.vault.maintenance()
-        st = self.vault.get_stats()
-        log("记忆库载入：短期 %d / 中期 %d / 长期 %d（核心 %d）" %
-            (st["short"], st["mid"], st["long"], st["key"]))
+        """WebUI 优先启动（设备未连接也可正常配置）；设备连接由后台循环自动重试。"""
         webui.start(self.vault, self.cfg, bot=self,
                     on_config_changed=self._on_config_changed)
-        self.state = "待命"
-        self.refresh_screen()
         self.start_connection_request_listener()   # 设备端「连接管理端」反向连接监听
         threading.Thread(target=self.worker, daemon=True).start()
         threading.Thread(target=self._status_loop, daemon=True).start()
+        threading.Thread(target=self._connect_loop, daemon=True).start()
         return True
 
     def _status_loop(self):
