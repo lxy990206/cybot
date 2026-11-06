@@ -14,8 +14,8 @@ if [ -x .venv/bin/python ]; then
     PY=./.venv/bin/python
 fi
 
-if ! $PY -c "import av, PIL, requests" >/dev/null 2>&1; then
-    echo "[初始化] 首次运行，安装依赖 av / pillow / requests ..."
+if ! $PY -c "import av, PIL, requests, websocket" >/dev/null 2>&1; then
+    echo "[初始化] 首次运行，安装依赖 av / pillow / requests / websocket-client ..."
     $PY -m pip install -r requirements.txt \
         || { echo "[错误] 依赖安装失败，请检查网络或改用系统包（python3-av 等）；也可先运行 ./install_linux.sh"; exit 1; }
 fi

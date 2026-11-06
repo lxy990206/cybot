@@ -12,9 +12,9 @@ rem 优先使用 install_windows.bat 创建的虚拟环境
 set PY=python
 if exist ".venv\Scripts\python.exe" set PY=.venv\Scripts\python.exe
 
-%PY% -c "import av, PIL, requests" >nul 2>nul
+%PY% -c "import av, PIL, requests, websocket" >nul 2>nul
 if errorlevel 1 (
-    echo [初始化] 首次运行，安装依赖 av / pillow / requests ...
+    echo [初始化] 首次运行，安装依赖 av / pillow / requests / websocket-client ...
     %PY% -m pip install -r requirements.txt
     if errorlevel 1 (
         echo [错误] 依赖安装失败，请检查网络后重试（或先运行 install_windows.bat）

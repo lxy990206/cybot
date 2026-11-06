@@ -1,0 +1,6 @@
+# 行尾规范化：bat 必须 CRLF（cmd 解析 bug），sh 必须 LF（bash 不接受 CR）
+*.bat text eol=crlf
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf

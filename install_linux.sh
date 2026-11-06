@@ -14,21 +14,26 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 python3 --version
 
-if ! python3 -c "import venv" >/dev/null 2>&1; then
-    echo "[错误] 缺少 venv 模块（Debian/Ubuntu: sudo apt install python3-venv）"
+if ! python3 -c "import ensurepip" >/dev/null 2>&1; then
+    echo "[错误] 缺少 venv/ensurepip 模块（Debian/Ubuntu: sudo apt install python3-venv）"
     exit 1
 fi
 
 echo
 echo "[1/3] 创建虚拟环境 .venv ..."
-if [ ! -d .venv ]; then
-    python3 -m venv .venv
-else
+if [ -x .venv/bin/python ] && ./.venv/bin/python -c "import pip" >/dev/null 2>&1; then
     echo "       已存在，跳过"
+else
+    rm -rf .venv                    # 清理上次失败的半成品目录
+    if ! python3 -m venv .venv; then
+        rm -rf .venv
+        echo "[错误] 虚拟环境创建失败（Debian/Ubuntu: sudo apt install python3-venv）"
+        exit 1
+    fi
 fi
 
 echo
-echo "[2/3] 安装依赖（av / pillow / requests / 华风爱科天气 MCP）..."
+echo "[2/3] 安装依赖（av / pillow / requests / websocket-client / 天气 MCP）..."
 ./.venv/bin/python -m pip install --upgrade pip -i https://pypi.org/simple --quiet
 if ! ./.venv/bin/python -m pip install -r requirements.txt -i https://pypi.org/simple; then
     echo "[重试] 官方源失败，改用清华镜像 ..."
@@ -47,8 +52,13 @@ fi
 
 echo
 if [ ! -f config.json ]; then
-    echo "[错误] 缺少 config.json（应随项目分发），请确认文件完整"
-    exit 1
+    if [ -f config.example.json ]; then
+        cp config.example.json config.json
+        echo "[提示] 已从 config.example.json 生成 config.json，请编辑填入你的 API Key"
+    else
+        echo "[错误] 缺少 config.json 与 config.example.json，请确认文件完整"
+        exit 1
+    fi
 fi
 
 echo "================================================"

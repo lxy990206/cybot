@@ -24,7 +24,7 @@
 Windows:  install_windows.bat
 Linux:    ./install_linux.sh
 
-# 2. 配置：复制 config.example.json 为 config.json，填入你的 API Key
+# 2. 配置：安装脚本会自动从 config.example.json 生成 config.json，编辑填入你的 API Key
 #    （设备 IP 可留空，自动发现按设备 ID 锁定）
 
 # 3. 启动

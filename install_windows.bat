@@ -18,19 +18,22 @@ python --version
 
 echo.
 echo [1/3] 创建虚拟环境 .venv ...
-if not exist .venv (
+".venv\Scripts\python.exe" -c "import pip" >nul 2>nul
+if not errorlevel 1 (
+    echo        已存在，跳过
+) else (
+    if exist .venv rmdir /s /q .venv
     python -m venv .venv
     if errorlevel 1 (
+        if exist .venv rmdir /s /q .venv
         echo [错误] 虚拟环境创建失败
         pause
         exit /b 1
     )
-) else (
-    echo        已存在，跳过
 )
 
 echo.
-echo [2/3] 安装依赖（av / pillow / requests / 华风爱科天气 MCP）...
+echo [2/3] 安装依赖（av / pillow / requests / websocket-client / 天气 MCP）...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip -i https://pypi.org/simple --quiet
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt -i https://pypi.org/simple
 if errorlevel 1 (
@@ -46,9 +49,14 @@ if errorlevel 1 (
 echo.
 echo [3/3] 检查配置文件 ...
 if not exist config.json (
-    echo [错误] 缺少 config.json（应随项目分发），请确认文件完整
-    pause
-    exit /b 1
+    if exist config.example.json (
+        copy /y config.example.json config.json >nul
+        echo [提示] 已从 config.example.json 生成 config.json，请编辑填入你的 API Key
+    ) else (
+        echo [错误] 缺少 config.json 与 config.example.json，请确认文件完整
+        pause
+        exit /b 1
+    )
 )
 
 echo.
